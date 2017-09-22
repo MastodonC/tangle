@@ -2,8 +2,8 @@
   (:require [clojure.string :as str]
             [clojure.java.shell :as sh]
             [clojure.java.io :as io]
-            [hiccup.core :as h]))
-
+            [hiccup.core :as h]
+            [clojure.pprint :refer [pprint]]))
 
 
 (def ^:private default-graph-options
@@ -175,10 +175,14 @@
         edge->descriptor (:edge->descriptor options (fn [n1 n2 opts] opts))
         node->id (comp format-id (:node->id options identity))
         node->cluster (:node->cluster options)
+        node->rank (:node->rank options)
         cluster->parent (:cluster->parent options (constantly nil))
         cluster->id (:cluster->id options identity)
         cluster->descriptor (:cluster->descriptor options (constantly nil))
-
+        ranks (:ranks options)
+        ranked-nodes (if node->rank
+                       (group-by node->rank nodes)
+                       {nil nodes})
         current-cluster (::cluster options)
         cluster->nodes (if node->cluster
                          (group-by node->cluster nodes)
@@ -199,7 +203,9 @@
            (if (and (not current-cluster) (get-in options [:graph :label]))
              (str " \"" (escape (get-in options [:graph :label])) "\"")
              "")
+
            " {\n"
+
 
            (when current-cluster
              (let [cluster-options (cluster->descriptor current-cluster)]
@@ -217,10 +223,31 @@
                 (when-not (empty? edge-options) (str "edge[" (format-options edge-options) "]\n")))))
 
            ;; format nodes in current cluster
-           (apply str (let [nodes-in-cluster (cluster->nodes current-cluster)]
-                        (->> nodes-in-cluster
-                             (map #(format-node (node->id %) (node->descriptor %)))
-                             (interpose "\n"))))
+           (if ranks
+             (str "ranksep=0.75;\n"
+                  "\n"
+                  "{\n"
+                  "node [shape=plaintext, fontsize=16];\n"
+                  (reduce (fn [r v] (str r " -- " v ))
+                          (map #(str "\"" (name %) "\"") ranks))
+                  "\n"
+                  "}\n"
+                  "\n"))
+
+           (apply str
+                  (reduce (fn [s,r] (str s r))
+                            (map (fn [r] (str "{ rank = \"same\" ; \"" r "\" ;"
+                                              (apply str
+                                                     (->> (get ranked-nodes r)
+                                                          (map #(format-node (node->id %) (node->descriptor %)))
+                                                          (interpose " ; ")))
+                                              "}\n"))
+                                 ranks)))
+
+           ;; (apply str (let [nodes-in-cluster (cluster->nodes current-cluster)]
+           ;;              (->> nodes-in-cluster
+           ;;                   (map #(format-node (node->id %) (node->descriptor %)))
+           ;;                   (interpose "\n"))))
            "\n"
 
            ;; format subclusters
@@ -263,4 +290,3 @@
     (or
      (remove-viewbox out)
      (println err))))
-
